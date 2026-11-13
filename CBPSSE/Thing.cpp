@@ -153,6 +153,7 @@ Thing::Thing(NiAVObject* obj, BSFixedString& name, Actor* actor)
     dynamicBreastScale = 1.0f;
     dynamicStiffnessMul = 1.0f;
     dynamicDampingMul = 1.0f;
+    dynamicGravityMul = 1.0f;
     lastMorphCheckTime = 0;
 
     IsBreastBone = ContainsNoCase(std::string(boneName.c_str()), "Breast");
@@ -492,12 +493,15 @@ void Thing::UpdateThing(Actor* actor)
             dynamicBreastScale = morphScale * armorSupport.scaleMul;
             dynamicStiffnessMul = morphStiff * armorSupport.stiffnessMul;
             dynamicDampingMul = morphDamp * armorSupport.dampingMul;
+            dynamicGravityMul = armorSupport.gravityMul;
 
             if (dynamicBreastScale < 0.0f) dynamicBreastScale = 0.0f;
             if (dynamicBreastScale > 2.0f) dynamicBreastScale = 2.0f;
+            if (dynamicGravityMul < 0.0f) dynamicGravityMul = 0.0f;
+            if (dynamicGravityMul > 1.0f) dynamicGravityMul = 1.0f;
 
-            logger.Info("OpenCBP: actor %08x [%s] morphScale=%.2f armScale=%.2f finalScale=%.2f finalStiff=%.2f\n",
-                actor->formID, boneName.c_str(), morphScale, armorSupport.scaleMul, dynamicBreastScale, dynamicStiffnessMul);
+            logger.Info("OpenCBP: actor %08x [%s] morphScale=%.2f armScale=%.2f finalScale=%.2f finalStiff=%.2f finalGrav=%.2f\n",
+                actor->formID, boneName.c_str(), morphScale, armorSupport.scaleMul, dynamicBreastScale, dynamicStiffnessMul, dynamicGravityMul);
         }
     }
 
@@ -620,8 +624,9 @@ void Thing::UpdateThing(Actor* actor)
     float curStiffness = stiffness * dynamicStiffnessMul;
     float curStiffness2 = stiffness2 * dynamicStiffnessMul;
     float curDamping = damping * dynamicDampingMul;
+    float curGravityBias = IsBreastBone ? (gravityBias * dynamicGravityMul) : gravityBias;
 
-    NiPoint3 force = (diff * curStiffness) + (diff2 * curStiffness2) - NiPoint3(0.0f, 0.0f, gravityBias);
+    NiPoint3 force = (diff * curStiffness) + (diff2 * curStiffness2) - NiPoint3(0.0f, 0.0f, curGravityBias);
 
 #if DEBUG
     logger.Error("Diff2: ");
@@ -703,7 +708,7 @@ void Thing::UpdateThing(Actor* actor)
     // Store a copy of localDiff for transforming rotation motions
     auto rotDiff = localDiff;
 
-    auto varGravitySupine = CalculateGravitySupine(actor);
+    auto varGravitySupine = CalculateGravitySupine(actor) * (dynamicGravityMul * dynamicBreastScale);
     localDiff.x += varGravitySupine.x * linearX;
     localDiff.y += varGravitySupine.y * linearY;
     localDiff.z += varGravitySupine.z * linearZ;

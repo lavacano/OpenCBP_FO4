@@ -27,6 +27,7 @@ namespace actorUtils
         float scaleMul;
         float stiffnessMul;
         float dampingMul;
+        float gravityMul;
     };
 
     ArmorSupportTier GetActorArmorSupport(Actor* actor, bool isBreastBone, bool isButtBone);

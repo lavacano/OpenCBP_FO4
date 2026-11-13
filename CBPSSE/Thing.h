@@ -49,6 +49,7 @@ class Thing
     float dynamicBreastScale;
     float dynamicStiffnessMul;
     float dynamicDampingMul;
+    float dynamicGravityMul;
     clock_t lastMorphCheckTime;
 
 public:

@@ -453,26 +453,168 @@ config_t actorUtils::BuildConfigForActor(Actor* actor, UInt64 hashKey)
     return baseConfig;
 }
 
+namespace
+{
+    struct KeywordTierState
+    {
+        actorUtils::ArmorSupportTier tier{ 1.0f, 1.0f, 1.0f, 1.0f };
+        bool isPowerArmor = false;
+        bool hasSupportKeyword = false;
+        bool hasExplicitLewd = false;
+    };
+
+    void ApplyTighterTier(actorUtils::ArmorSupportTier& dst, const actorUtils::ArmorSupportTier& cand)
+    {
+        if (cand.scaleMul < dst.scaleMul) dst.scaleMul = cand.scaleMul;
+        if (cand.stiffnessMul > dst.stiffnessMul) dst.stiffnessMul = cand.stiffnessMul;
+        if (cand.dampingMul > dst.dampingMul) dst.dampingMul = cand.dampingMul;
+        if (cand.gravityMul < dst.gravityMul) dst.gravityMul = cand.gravityMul;
+    }
+
+    bool ContainsAnyKeyword(const char* kw, const char* const* needles, size_t count)
+    {
+        for (size_t i = 0; i < count; ++i)
+        {
+            if (strstr(kw, needles[i]) != nullptr)
+                return true;
+        }
+        return false;
+    }
+
+    struct KeywordTierRule
+    {
+        const char* const* keywords;
+        size_t count;
+        actorUtils::ArmorSupportTier tier;
+    };
+
+    void ApplyTierRules(const char* kw, const KeywordTierRule* rules, size_t ruleCount,
+        const char* const* lewdKws, size_t lewdCount, float powerArmorGravity, KeywordTierState& state)
+    {
+        if (strstr(kw, "ArmorTypePower"))
+        {
+            state.isPowerArmor = true;
+            state.tier = actorUtils::ArmorSupportTier{ 0.0f, 10.0f, 5.0f, powerArmorGravity };
+            return;
+        }
+
+        for (size_t i = 0; i < ruleCount; ++i)
+        {
+            if (ContainsAnyKeyword(kw, rules[i].keywords, rules[i].count))
+            {
+                ApplyTighterTier(state.tier, rules[i].tier);
+                state.hasSupportKeyword = true;
+                return;
+            }
+        }
+
+        if (ContainsAnyKeyword(kw, lewdKws, lewdCount))
+            state.hasExplicitLewd = true;
+    }
+
+    void ClassifyBreastKeyword(const char* kw, KeywordTierState& state)
+    {
+        static const char* const kHeavyKws[] = {
+            "sakr_kwd_armorTopFull", "ArmorTypeHeavy", "ArmorTypeMetal", "ArmorTypeCombat"
+        };
+        static const char* const kMediumKws[] = {
+            "sakr_kwd_topFull", "sakr_kwd_armorTopBreast", "ArmorTypeMedium", "ArmorTypeLeather"
+        };
+        static const char* const kBraKws[] = {
+            "sakr_kwd_braNormal", "sakr_kwd_topTagTight", "ArmorTypeLight"
+        };
+        static const char* const kClothKws[] = { "ArmorClothing" };
+        static const char* const kSkimpyKws[] = {
+            "sakr_kwd_braBikini", "sakr_kwd_topCleavage", "sakr_kwd_topLowCutCleavage",
+            "sakr_kwd_topTagCropTop", "sakr_kwd_topTagTankTop", "sakr_kwd_topTagHalterTop",
+            "sakr_kwd_topTagSideBoob", "sakr_kwd_braTagSheer", "sakr_kwd_topTagSheer"
+        };
+        static const char* const kLewdKws[] = {
+            "sakr_kwd_braMicroBikini", "sakr_kwd_armorTopLewd"
+        };
+        // Normal clothing implies at least standard bra support underneath
+        static const KeywordTierRule kRules[] = {
+            { kHeavyKws,  sizeof(kHeavyKws)  / sizeof(kHeavyKws[0]),  { 0.40f, 1.60f, 1.30f, 0.35f } },
+            { kMediumKws, sizeof(kMediumKws) / sizeof(kMediumKws[0]), { 0.58f, 1.30f, 1.18f, 0.50f } },
+            { kBraKws,    sizeof(kBraKws)    / sizeof(kBraKws[0]),    { 0.72f, 1.15f, 1.10f, 0.62f } },
+            { kClothKws,  sizeof(kClothKws)  / sizeof(kClothKws[0]),  { 0.78f, 1.12f, 1.08f, 0.68f } },
+            { kSkimpyKws, sizeof(kSkimpyKws) / sizeof(kSkimpyKws[0]), { 0.86f, 1.06f, 1.04f, 0.80f } },
+        };
+
+        ApplyTierRules(kw, kRules, sizeof(kRules) / sizeof(kRules[0]),
+            kLewdKws, sizeof(kLewdKws) / sizeof(kLewdKws[0]), 0.0f, state);
+    }
+
+    void ClassifyButtKeyword(const char* kw, KeywordTierState& state)
+    {
+        static const char* const kHeavyKws[] = {
+            "sakr_kwd_armorBottomFull", "ArmorTypeHeavy", "ArmorTypeMetal", "ArmorTypeCombat"
+        };
+        static const char* const kMediumKws[] = {
+            "sakr_kwd_pantsLong", "sakr_kwd_skirtLong", "sakr_kwd_pantsTagTight",
+            "sakr_kwd_skirtTagTight", "sakr_kwd_armorBottomButt", "ArmorTypeMedium", "ArmorTypeLeather"
+        };
+        static const char* const kStandardKws[] = {
+            "sakr_kwd_pantsShorts", "sakr_kwd_skirtShort", "sakr_kwd_pantyNormal",
+            "ArmorTypeLight", "ArmorClothing"
+        };
+        static const char* const kSkimpyKws[] = {
+            "sakr_kwd_pantsHotPants", "sakr_kwd_skirtMini", "sakr_kwd_skirtMicro",
+            "sakr_kwd_pantsThong", "sakr_kwd_pantyTagSheer", "sakr_kwd_skirtTagSheer"
+        };
+        static const char* const kLewdKws[] = {
+            "sakr_kwd_pantyThong", "sakr_kwd_pantyGString", "sakr_kwd_armorBottomLewd"
+        };
+        static const KeywordTierRule kRules[] = {
+            { kHeavyKws,    sizeof(kHeavyKws)    / sizeof(kHeavyKws[0]),    { 0.35f, 2.00f, 1.40f, 1.0f } },
+            { kMediumKws,   sizeof(kMediumKws)   / sizeof(kMediumKws[0]),   { 0.65f, 1.45f, 1.20f, 1.0f } },
+            { kStandardKws, sizeof(kStandardKws) / sizeof(kStandardKws[0]), { 0.78f, 1.25f, 1.10f, 1.0f } },
+            { kSkimpyKws,   sizeof(kSkimpyKws)   / sizeof(kSkimpyKws[0]),   { 0.90f, 1.10f, 1.05f, 1.0f } },
+        };
+
+        ApplyTierRules(kw, kRules, sizeof(kRules) / sizeof(kRules[0]),
+            kLewdKws, sizeof(kLewdKws) / sizeof(kLewdKws[0]), 1.0f, state);
+    }
+
+    void InspectKeywordForm(BGSKeywordForm* kwForm, bool isBreastBone, bool isButtBone, KeywordTierState& state)
+    {
+        if (!kwForm || !kwForm->keywords || kwForm->numKeywords == 0)
+            return;
+
+        for (UInt32 k = 0; k < kwForm->numKeywords && !state.isPowerArmor; ++k)
+        {
+            BGSKeyword* kwd = kwForm->keywords[k];
+            if (!kwd || !kwd->keyword.c_str())
+                continue;
+
+            const char* kw = kwd->keyword.c_str();
+            if (isBreastBone)
+                ClassifyBreastKeyword(kw, state);
+            else if (isButtBone)
+                ClassifyButtKeyword(kw, state);
+        }
+    }
+}
+
 actorUtils::ArmorSupportTier actorUtils::GetActorArmorSupport(Actor* actor, bool isBreastBone, bool isButtBone)
 {
-    ArmorSupportTier defaultSupport{ 1.0f, 1.0f, 1.0f };
+    ArmorSupportTier defaultSupport{ 1.0f, 1.0f, 1.0f, 1.0f };
     if (!actor || !IsActorValid(actor))
         return defaultSupport;
 
     // 1. Power Armor check: completely eliminates physics inside power armor
     if (IsActorInPowerArmor(actor))
     {
-        return ArmorSupportTier{ 0.0f, 10.0f, 5.0f };
+        return ArmorSupportTier{ 0.0f, 10.0f, 5.0f, 0.0f };
     }
 
     BipedAnim* biped = actor->biped.get();
     if (!biped)
         return defaultSupport;
 
-    // Slots of interest:
-    // Breasts: 11 (Torso Armor 41), 3 (Body Outfit 33), 6 (Underwear Top 36)
-    // Butt/Thighs: 3 (Body Outfit 33), 7 (Underwear Bottom 37), 10 (Left Leg 40), 12 (Right Leg 42)
-    const UInt32 breastSlots[] = { 11, 3, 6 };
+    // Breast slots: 11 (Torso Armor 41), 3 (Body Outfit 33), 6 (Underwear Top 36), plus keyword-gated mod bra slots 25..28 (55..58).
+    // Butt/Thigh slots: 3 (Body Outfit 33), 7 (Underwear Bottom 37), 10 (Left Leg 40), 12 (Right Leg 42).
+    const UInt32 breastSlots[] = { 11, 3, 6, 25, 26, 27, 28 };
     const UInt32 buttSlots[] = { 3, 7, 10, 12 };
 
     const UInt32* slotsToCheck = isBreastBone ? breastSlots : (isButtBone ? buttSlots : nullptr);
@@ -483,27 +625,20 @@ actorUtils::ArmorSupportTier actorUtils::GetActorArmorSupport(Actor* actor, bool
         return defaultSupport;
 
     // Determine actor's naked skin form if present so we don't treat bare skin as armor
-    TESObjectARMO* raceSkin = nullptr;
-    if (actor->race)
-    {
-        raceSkin = actor->race->skinForm.skin;
-    }
+    TESObjectARMO* raceSkin = actor->race ? actor->race->skinForm.skin : nullptr;
     TESObjectARMO* npcSkin = nullptr;
     if (actor->baseForm)
     {
         TESNPC* npc = DYNAMIC_CAST(actor->baseForm, TESForm, TESNPC);
         if (npc)
-        {
             npcSkin = npc->skinForm.skin;
-        }
     }
 
-    const TESForm* inspectedForms[8];
+    const TESForm* inspectedForms[16];
+    const TBO_InstanceData* inspectedInstances[16];
     size_t inspectedCount = 0;
 
-    float minScale = 1.0f;
-    float maxStiffness = 1.0f;
-    float maxDamping = 1.0f;
+    ArmorSupportTier aggregate{ 1.0f, 1.0f, 1.0f, 1.0f };
     bool foundAnyEquipped = false;
 
     for (size_t s = 0; s < numSlots; ++s)
@@ -517,18 +652,14 @@ actorUtils::ArmorSupportTier actorUtils::GetActorArmorSupport(Actor* actor, bool
             continue;
 
         const TESForm* armorForm = (const TESForm*)obj.parent.object;
-        if (!armorForm)
-            continue;
-
-        // Skip naked skin records
         if ((raceSkin && armorForm == raceSkin) || (npcSkin && armorForm == npcSkin))
             continue;
 
-        // Deduplicate
+        const TBO_InstanceData* instData = obj.parent.instanceData;
         bool alreadyInspected = false;
         for (size_t i = 0; i < inspectedCount; ++i)
         {
-            if (inspectedForms[i] == armorForm)
+            if (inspectedForms[i] == armorForm && inspectedInstances[i] == instData)
             {
                 alreadyInspected = true;
                 break;
@@ -537,121 +668,63 @@ actorUtils::ArmorSupportTier actorUtils::GetActorArmorSupport(Actor* actor, bool
         if (alreadyInspected)
             continue;
 
-        if (inspectedCount < 8)
-            inspectedForms[inspectedCount++] = armorForm;
-
-        foundAnyEquipped = true;
-
-        // Baseline support for clothed actors without specific tags
-        float itemScale = 0.90f;
-        float itemStiffness = 1.05f;
-        float itemDamping = 1.05f;
-
-        BGSKeywordForm* pKeywords = DYNAMIC_CAST((TESForm*)armorForm, TESForm, BGSKeywordForm);
-        if (pKeywords && pKeywords->keywords && pKeywords->numKeywords > 0)
+        if (inspectedCount < 16)
         {
-            for (UInt32 k = 0; k < pKeywords->numKeywords; ++k)
+            inspectedForms[inspectedCount] = armorForm;
+            inspectedInstances[inspectedCount] = instData;
+            ++inspectedCount;
+        }
+
+        KeywordTierState itemState;
+        BGSKeywordForm* baseKeywords = DYNAMIC_CAST((TESForm*)armorForm, TESForm, BGSKeywordForm);
+        InspectKeywordForm(baseKeywords, isBreastBone, isButtBone, itemState);
+
+        // OMODs / armor modifications can supply or override keywords via InstanceData
+        if (!itemState.isPowerArmor && instData)
+        {
+            auto* armInst = static_cast<TESObjectARMO::InstanceData*>(
+                Runtime_DynamicCast((void*)instData, RTTI_TBO_InstanceData, RTTI_TESObjectARMO__InstanceData));
+            if (armInst && armInst->keywords)
             {
-                BGSKeyword* kwd = pKeywords->keywords[k];
-                if (!kwd || !kwd->keyword.c_str())
-                    continue;
-
-                const char* kw = kwd->keyword.c_str();
-
-                if (isBreastBone)
-                {
-                    // Power Armor
-                    if (strstr(kw, "ArmorTypePower"))
-                    {
-                        itemScale = 0.0f; itemStiffness = 10.0f; itemDamping = 5.0f;
-                        break;
-                    }
-                    // Heavy / full plate
-                    else if (strstr(kw, "sakr_kwd_armorTopFull") || strstr(kw, "ArmorTypeHeavy") || strstr(kw, "ArmorTypeMetal") || strstr(kw, "ArmorTypeCombat"))
-                    {
-                        if (itemScale > 0.35f) { itemScale = 0.35f; itemStiffness = 1.80f; itemDamping = 1.30f; }
-                    }
-                    // Full top / coat / sweater
-                    else if (strstr(kw, "sakr_kwd_topFull") || strstr(kw, "sakr_kwd_armorTopBreast") || strstr(kw, "ArmorTypeMedium") || strstr(kw, "ArmorTypeLeather"))
-                    {
-                        if (itemScale > 0.60f) { itemScale = 0.60f; itemStiffness = 1.35f; itemDamping = 1.15f; }
-                    }
-                    // Normal bra / tight top / corset / light armor
-                    else if (strstr(kw, "sakr_kwd_braNormal") || strstr(kw, "sakr_kwd_topTagTight") || strstr(kw, "ArmorTypeLight"))
-                    {
-                        if (itemScale > 0.75f) { itemScale = 0.75f; itemStiffness = 1.20f; itemDamping = 1.10f; }
-                    }
-                    // Standard civilian clothing / dress / shirt / rags
-                    else if (strstr(kw, "ArmorClothing"))
-                    {
-                        if (itemScale > 0.92f) { itemScale = 0.92f; itemStiffness = 1.05f; itemDamping = 1.02f; }
-                    }
-                    // Skimpy / Cleavage / Bikini / Crop / Tank / Halter / SideBoob / Sheer
-                    else if (strstr(kw, "sakr_kwd_braBikini") || strstr(kw, "sakr_kwd_topCleavage") ||
-                             strstr(kw, "sakr_kwd_topLowCutCleavage") || strstr(kw, "sakr_kwd_topTagCropTop") ||
-                             strstr(kw, "sakr_kwd_topTagTankTop") || strstr(kw, "sakr_kwd_topTagHalterTop") ||
-                             strstr(kw, "sakr_kwd_topTagSideBoob") || strstr(kw, "sakr_kwd_braTagSheer") ||
-                             strstr(kw, "sakr_kwd_topTagSheer"))
-                    {
-                        itemScale = 0.88f; itemStiffness = 1.10f; itemDamping = 1.05f;
-                    }
-                    // Micro-Bikini / Lewd bare
-                    else if (strstr(kw, "sakr_kwd_braMicroBikini") || strstr(kw, "sakr_kwd_armorTopLewd"))
-                    {
-                        itemScale = 1.00f; itemStiffness = 1.00f; itemDamping = 1.00f;
-                    }
-                }
-                else if (isButtBone)
-                {
-                    // Power Armor
-                    if (strstr(kw, "ArmorTypePower"))
-                    {
-                        itemScale = 0.0f; itemStiffness = 10.0f; itemDamping = 5.0f;
-                        break;
-                    }
-                    // Heavy plate
-                    else if (strstr(kw, "sakr_kwd_armorBottomFull") || strstr(kw, "ArmorTypeHeavy") || strstr(kw, "ArmorTypeMetal"))
-                    {
-                        if (itemScale > 0.35f) { itemScale = 0.35f; itemStiffness = 2.00f; itemDamping = 1.40f; }
-                    }
-                    // Pants long / tight pants / long skirt
-                    else if (strstr(kw, "sakr_kwd_pantsLong") || strstr(kw, "sakr_kwd_skirtLong") ||
-                             strstr(kw, "sakr_kwd_pantsTagTight") || strstr(kw, "sakr_kwd_skirtTagTight") ||
-                             strstr(kw, "sakr_kwd_armorBottomButt") || strstr(kw, "ArmorTypeMedium") || strstr(kw, "ArmorTypeLeather"))
-                    {
-                        if (itemScale > 0.65f) { itemScale = 0.65f; itemStiffness = 1.45f; itemDamping = 1.20f; }
-                    }
-                    // Shorts / Short Skirt / Normal panties
-                    else if (strstr(kw, "sakr_kwd_pantsShorts") || strstr(kw, "sakr_kwd_skirtShort") ||
-                             strstr(kw, "sakr_kwd_pantyNormal") || strstr(kw, "ArmorTypeLight") || strstr(kw, "ArmorClothing"))
-                    {
-                        if (itemScale > 0.78f) { itemScale = 0.78f; itemStiffness = 1.25f; itemDamping = 1.10f; }
-                    }
-                    // Hot pants / mini skirt / micro skirt / thong pants
-                    else if (strstr(kw, "sakr_kwd_pantsHotPants") || strstr(kw, "sakr_kwd_skirtMini") ||
-                             strstr(kw, "sakr_kwd_skirtMicro") || strstr(kw, "sakr_kwd_pantsThong") ||
-                             strstr(kw, "sakr_kwd_pantyTagSheer") || strstr(kw, "sakr_kwd_skirtTagSheer"))
-                    {
-                        itemScale = 0.90f; itemStiffness = 1.10f; itemDamping = 1.05f;
-                    }
-                    // Thong / G-string / Lewd bare
-                    else if (strstr(kw, "sakr_kwd_pantyThong") || strstr(kw, "sakr_kwd_pantyGString") || strstr(kw, "sakr_kwd_armorBottomLewd"))
-                    {
-                        itemScale = 1.00f; itemStiffness = 1.00f; itemDamping = 1.00f;
-                    }
-                }
+                InspectKeywordForm(armInst->keywords, isBreastBone, isButtBone, itemState);
             }
         }
 
-        if (itemScale < minScale) minScale = itemScale;
-        if (itemStiffness > maxStiffness) maxStiffness = itemStiffness;
-        if (itemDamping > maxDamping) maxDamping = itemDamping;
+        // Extra mod slots (55..58) can hold non-garment accessories (backpacks, eyewear, etc.);
+        // only count them as breast garments when they explicitly carry a relevant keyword.
+        const bool isPrimarySlot = (slotIdx <= 12);
+        if (!isPrimarySlot && !itemState.isPowerArmor && !itemState.hasSupportKeyword && !itemState.hasExplicitLewd)
+            continue;
+
+        foundAnyEquipped = true;
+
+        if (itemState.isPowerArmor)
+            return itemState.tier;
+
+        if (!itemState.hasSupportKeyword)
+        {
+            if (itemState.hasExplicitLewd)
+            {
+                const ArmorSupportTier lewdTier = isBreastBone
+                    ? ArmorSupportTier{ 0.95f, 1.02f, 1.01f, 0.92f }
+                    : ArmorSupportTier{ 0.95f, 1.05f, 1.02f, 1.0f };
+                ApplyTighterTier(itemState.tier, lewdTier);
+            }
+            else if (isPrimarySlot)
+            {
+                // Untagged clothing/armor defaults to at least standard bra / everyday garment support
+                const ArmorSupportTier clothedDefault = isBreastBone
+                    ? ArmorSupportTier{ 0.78f, 1.12f, 1.08f, 0.68f }
+                    : ArmorSupportTier{ 0.78f, 1.25f, 1.10f, 1.0f };
+                ApplyTighterTier(itemState.tier, clothedDefault);
+            }
+        }
+
+        ApplyTighterTier(aggregate, itemState.tier);
     }
 
     if (!foundAnyEquipped)
-    {
-        return ArmorSupportTier{ 1.0f, 1.0f, 1.0f };
-    }
+        return defaultSupport;
 
-    return ArmorSupportTier{ minScale, maxStiffness, maxDamping };
+    return aggregate;
 }
